@@ -100,12 +100,13 @@ async function fetchWithCookies(url, jar, options = {}) {
   return res;
 }
 
-async function gplinksEngineBypass(startUrl) {
+async function gplinksEngineBypass(startUrl, dbg = {}) {
   const jar = [];
   const u0 = new URL(startUrl);
 
   // Step 1: initial GET (manual redirect to capture vid flow)
   let res = await fetchWithCookies(startUrl, jar);
+  dbg.initialStatus = res.status;
   // follow up to 5 manual redirects, preserving cookies
   let currentUrl = startUrl;
   for (let i = 0; i < 5; i++) {
@@ -121,11 +122,16 @@ async function gplinksEngineBypass(startUrl) {
 
   let html = await res.text();
   currentUrl = res.url || currentUrl;
+  dbg.afterRedirects = currentUrl;
+  dbg.htmlLen = html.length;
 
   // New GPLinks "subscription gate" has a "Continue with ads" skip link
   // e.g. <a href="/x6jlK?skip_sub=1" class="gate-btn-skip"> — follow it,
   // it 302s to the ad-flow / destination. Then continue with that page.
   const skipMatch = html.match(/href="([^"]*skip_sub=1[^"]*)"/i);
+  dbg.hasSkipLink = !!skipMatch;
+  dbg.hasGate = /gate-container/i.test(html);
+  dbg.hasCloudflare = /challenge-platform|cf-challenge|just a moment/i.test(html);
   if (skipMatch) {
     const skipUrl = new URL(skipMatch[1], currentUrl).toString();
     let skipRes = await fetchWithCookies(skipUrl, jar, {
@@ -166,8 +172,11 @@ async function gplinksEngineBypass(startUrl) {
     // If we already followed a skip link to a different page, that page
     // IS the destination (e.g. skip_sub=1 → 302 to advertiser site).
     if (skipMatch && currentUrl !== startUrl) return currentUrl;
+    dbg.hasEngine = false;
+    dbg.finalUrl = currentUrl;
     return null;
   }
+  dbg.hasEngine = true;
 
   const origin = new URL(currentUrl).origin || `${u0.protocol}//${u0.host}`;
   const goUrl = `${origin}/links/go`;
@@ -251,8 +260,9 @@ module.exports = async function handler(req, res) {
   try {
     // Try GPLinks-engine first, fall back to generic resolving
     let dest = null;
+    const dbg = {};
     try {
-      dest = await gplinksEngineBypass(url);
+      dest = await gplinksEngineBypass(url, dbg);
     } catch (e) {
       // Paywall / challenge / links/go failures are definitive — surface them
       if (e.code === "PAYWALL" || (e.message && e.message.includes("links/go failed"))) throw e;
@@ -263,6 +273,7 @@ module.exports = async function handler(req, res) {
         error: "No bypassable destination found — page has no redirect or token form (this gplinks link shows a Premium paywall gate).",
         original: url,
         bypassed: dest || url,
+        debug: dbg,
       });
     }
     return res.status(200).json({ original: url, bypassed: dest });

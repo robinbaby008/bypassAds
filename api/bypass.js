@@ -107,6 +107,13 @@ async function gplinksEngineBypass(startUrl, dbg = {}) {
   // Step 1: initial GET (manual redirect to capture vid flow)
   let res = await fetchWithCookies(startUrl, jar);
   dbg.initialStatus = res.status;
+  if ([403, 503].includes(res.status)) {
+    const err = new Error(
+      `Upstream blocked this server's IP (HTTP ${res.status} from ${u0.host}). Datacenter IPs get a Cloudflare challenge — open the link in your browser with the userscript instead.`
+    );
+    err.code = "UPSTREAM_BLOCKED";
+    throw err;
+  }
   // follow up to 5 manual redirects, preserving cookies
   let currentUrl = startUrl;
   for (let i = 0; i < 5; i++) {
@@ -265,7 +272,7 @@ module.exports = async function handler(req, res) {
       dest = await gplinksEngineBypass(url, dbg);
     } catch (e) {
       // Paywall / challenge / links/go failures are definitive — surface them
-      if (e.code === "PAYWALL" || (e.message && e.message.includes("links/go failed"))) throw e;
+      if (e.code === "PAYWALL" || e.code === "UPSTREAM_BLOCKED" || (e.message && e.message.includes("links/go failed"))) throw e;
     }
     if (!dest) dest = await genericResolve(url);
     if (!dest || dest === url) {

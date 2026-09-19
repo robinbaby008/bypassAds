@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GPLinks Bypasser 2026
 // @namespace    Gplinks Bypasser 2026
-// @version      9
+// @version      10
 // @description  Made By @NickUpdates (Telegram)
 // @match        https://rajcet.com/*
 // @match        https://fakepe.com/*
@@ -245,39 +245,115 @@
 
     // ── skrresults.com: 15s #myTimer → #VerifyBtn → Continue link ──
     // The ad-domain page shows "Please wait 15 Seconds...", then reveals a
-    // VERIFY button, then a Continue link. Auto-drive the whole sequence.
+    // VERIFY button (#VerifyBtn), then a Continue link (.NextBtn).
+    // Auto-drive the whole sequence. Evasion + click logic adapted from
+    // "gplinks auto-skip" v2.3 by BlazeFTL (GreasyFork 490365).
     if (location.hostname.includes("skrresults.com")) {
         console.log("[Bypasser] skrresults VERIFY flow armed");
-        const vWaiter = setInterval(() => {
-            const btn = document.getElementById("VerifyBtn");
-            if (!btn) return;
-            const timerEl = document.getElementById("myTimer");
-            const t = timerEl ? parseInt(timerEl.textContent, 10) : NaN;
-            const visible = btn.getClientRects().length > 0 &&
-                getComputedStyle(btn).display !== "none";
-            if (visible || t === 0 || isNaN(t)) {
-                clearInterval(vWaiter);
-                btn.style.setProperty("display", "inline-block", "important");
-                btn.removeAttribute("disabled");
-                console.log("[Bypasser] clicking VERIFY");
-                btn.click();
-                // After verify, a Continue link appears — click it when visible.
-                const cWaiter = setInterval(() => {
-                    const next =
-                        document.querySelector("a.NextBtn") ||
-                        [...document.querySelectorAll("a")].find(a =>
-                            /continue/i.test(a.textContent) &&
-                            a.getClientRects().length > 0 &&
-                            getComputedStyle(a).display !== "none");
-                    if (next) {
-                        clearInterval(cWaiter);
-                        console.log("[Bypasser] clicking Continue:", next.href);
-                        next.click();
-                    }
-                }, 500);
-                setTimeout(() => clearInterval(cWaiter), 120000);
+
+        // 1. Evasions the ad page checks for.
+        window.cookie_pub_plan_id = 12;
+        try {
+            const expireTime = new Date(Date.now() + 2 * 60 * 1000);
+            document.cookie = `adexp=1; path=/; expires=${expireTime.toUTCString()}`;
+        } catch (e) { /* non-fatal */ }
+        // Fake iframe focus trick (once).
+        try {
+            const f = document.createElement("iframe");
+            f.style = "height:0;width:0;border:0;";
+            document.body.appendChild(f);
+            f.focus();
+            setTimeout(() => window.focus(), 500);
+        } catch (e) { /* non-fatal */ }
+
+        const clickIfVisible = (el) => {
+            if (el && el.offsetParent !== null) {
+                el.removeAttribute("disabled");
+                el.click();
+                return true;
             }
-        }, 500);
-        setTimeout(() => clearInterval(vWaiter), 180000);
+            return false;
+        };
+        const clickWithRetry = (selector, flagName, callback) => {
+            const el = document.querySelector(selector);
+            if (!el || window[flagName]) return;
+            if (clickIfVisible(el)) {
+                window[flagName] = true;
+                if (callback) callback();
+            } else {
+                setTimeout(() => clickWithRetry(selector, flagName, callback), 1000);
+            }
+        };
+        const clickNextAndCheckHash = () => {
+            clickWithRetry(".NextBtn", "nextClicked", () => {
+                setTimeout(() => {
+                    // Some steps land on a bare "#" hash — advance again.
+                    if (window.location.href.endsWith("#")) {
+                        window.nextClicked = false;
+                        clickWithRetry(".NextBtn", "nextClicked");
+                    }
+                }, 1500);
+            });
+            // Fallback: any visible "Continue" link.
+            setTimeout(() => {
+                if (window.nextClicked) return;
+                const alt = [...document.querySelectorAll("a")].find(a =>
+                    /continue/i.test(a.textContent) &&
+                    a.getClientRects().length > 0 &&
+                    getComputedStyle(a).display !== "none");
+                if (alt) {
+                    window.nextClicked = true;
+                    console.log("[Bypasser] clicking Continue:", alt.href);
+                    alt.click();
+                }
+            }, 3000);
+        };
+
+        const smileyExists = !!document.querySelector(".SmileyBanner");
+        if (smileyExists) {
+            // Variant page: run our own 15s countdown, then click through.
+            const verifyBtn = document.querySelector("#VerifyBtn");
+            if (verifyBtn) {
+                const placeholder = document.createElement("div");
+                placeholder.style.color = "black";
+                placeholder.style.fontWeight = "bold";
+                verifyBtn.parentNode.insertBefore(placeholder, verifyBtn);
+                verifyBtn.style.display = "none";
+                let countdown = 15;
+                placeholder.innerText = `Please wait ${countdown} seconds`;
+                const timer = setInterval(() => {
+                    countdown--;
+                    placeholder.innerText = `Please wait ${countdown} seconds`;
+                    if (countdown <= 0) {
+                        clearInterval(timer);
+                        verifyBtn.style.display = "inline-block";
+                        placeholder.remove();
+                        clickWithRetry("#VerifyBtn", "verifyClicked");
+                        setTimeout(clickNextAndCheckHash, 1000);
+                    }
+                }, 1000);
+            }
+        } else {
+            // Standard page: site reveals VERIFY after its own ~15s timer.
+            // Wait for it (or the timer hitting 0), then click through.
+            const vWaiter = setInterval(() => {
+                const btn = document.getElementById("VerifyBtn");
+                if (!btn && !document.querySelector(".NextBtn")) return;
+                const timerEl = document.getElementById("myTimer");
+                const t = timerEl ? parseInt(timerEl.textContent, 10) : NaN;
+                const btnVisible = btn && btn.getClientRects().length > 0 &&
+                    getComputedStyle(btn).display !== "none";
+                if (btnVisible || t === 0 || isNaN(t)) {
+                    clearInterval(vWaiter);
+                    if (btn) {
+                        btn.style.setProperty("display", "inline-block", "important");
+                        console.log("[Bypasser] clicking VERIFY");
+                    }
+                    clickWithRetry("#VerifyBtn", "verifyClicked");
+                    setTimeout(clickNextAndCheckHash, 1000);
+                }
+            }, 500);
+            setTimeout(() => clearInterval(vWaiter), 180000);
+        }
     }
 })();

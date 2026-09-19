@@ -165,6 +165,9 @@ async function gplinksEngineBypass(startUrl, dbg = {}) {
   currentUrl = res.url || currentUrl;
   dbg.afterRedirects = currentUrl;
   dbg.htmlLen = html.length;
+  dbg.proxy = !!getDispatcher();
+  // First 400 chars so we can identify block/challenge variants remotely.
+  dbg.htmlHead = html.slice(0, 400).replace(/\s+/g, " ");
 
   // New GPLinks "subscription gate" has a "Continue with ads" skip link
   // e.g. <a href="/x6jlK?skip_sub=1" class="gate-btn-skip"> — follow it,

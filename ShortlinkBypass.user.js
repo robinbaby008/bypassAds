@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GPLinks Bypasser 2026
 // @namespace    Gplinks Bypasser 2026
-// @version      10
+// @version      11
 // @description  Made By @NickUpdates (Telegram)
 // @match        https://rajcet.com/*
 // @match        https://fakepe.com/*
@@ -16,11 +16,37 @@
 (async function () {
     'use strict';
     const href = location.href;
-    if (href.includes("gplinks.co")) {
-        if (!href.includes("?pid")) {
-            location.replace(href + "?skip_sub=1");
-            return
+    // ── Premium subscription gate → "Continue with ads" ──
+    // Gate pages have no ?pid/&pid yet. Prefer clicking the site's own skip
+    // button (a.gate-btn-skip); fall back to a query-safe redirect so URLs
+    // that already carry params don't get a broken double "?".
+    if (href.includes("gplinks.co") && !/[?&]pid=/.test(href)) {
+        const skipBtn = document.querySelector(
+            "a.gate-btn-skip, a[href*='skip_sub=1']"
+        );
+        if (skipBtn && skipBtn.href) {
+            console.log("[Bypasser] gate skip via button:", skipBtn.href);
+            location.replace(skipBtn.href);
+            return;
         }
+        if (document.readyState === "loading") {
+            // Button may not be parsed yet — retry once DOM is ready.
+            document.addEventListener("DOMContentLoaded", () => {
+                const late = document.querySelector(
+                    "a.gate-btn-skip, a[href*='skip_sub=1']"
+                );
+                location.replace(
+                    late && late.href
+                        ? late.href
+                        : href + (href.includes("?") ? "&" : "?") + "skip_sub=1"
+                );
+            });
+            return;
+        }
+        const sep = href.includes("?") ? "&" : "?";
+        console.log("[Bypasser] gate skip via redirect");
+        location.replace(href + sep + "skip_sub=1");
+        return;
     };
     const nonce = window.gpfConfig.nonce;
     if (nonce) {

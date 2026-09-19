@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         GPLinks Bypasser 2026
 // @namespace    Gplinks Bypasser 2026
-// @version      8
+// @version      9
 // @description  Made By @NickUpdates (Telegram)
 // @match        https://rajcet.com/*
 // @match        https://fakepe.com/*
 // @match        https://gplinks.co/*
+// @match        https://skrresults.com/*
 // @run-at       document-idle
 // @grant        none
 // @downloadURL  https://YOUR-PROJECT.vercel.app/ShortlinkBypass.user.js
@@ -241,4 +242,42 @@
         }, 1000);
 
     }, 500);
+
+    // ── skrresults.com: 15s #myTimer → #VerifyBtn → Continue link ──
+    // The ad-domain page shows "Please wait 15 Seconds...", then reveals a
+    // VERIFY button, then a Continue link. Auto-drive the whole sequence.
+    if (location.hostname.includes("skrresults.com")) {
+        console.log("[Bypasser] skrresults VERIFY flow armed");
+        const vWaiter = setInterval(() => {
+            const btn = document.getElementById("VerifyBtn");
+            if (!btn) return;
+            const timerEl = document.getElementById("myTimer");
+            const t = timerEl ? parseInt(timerEl.textContent, 10) : NaN;
+            const visible = btn.getClientRects().length > 0 &&
+                getComputedStyle(btn).display !== "none";
+            if (visible || t === 0 || isNaN(t)) {
+                clearInterval(vWaiter);
+                btn.style.setProperty("display", "inline-block", "important");
+                btn.removeAttribute("disabled");
+                console.log("[Bypasser] clicking VERIFY");
+                btn.click();
+                // After verify, a Continue link appears — click it when visible.
+                const cWaiter = setInterval(() => {
+                    const next =
+                        document.querySelector("a.NextBtn") ||
+                        [...document.querySelectorAll("a")].find(a =>
+                            /continue/i.test(a.textContent) &&
+                            a.getClientRects().length > 0 &&
+                            getComputedStyle(a).display !== "none");
+                    if (next) {
+                        clearInterval(cWaiter);
+                        console.log("[Bypasser] clicking Continue:", next.href);
+                        next.click();
+                    }
+                }, 500);
+                setTimeout(() => clearInterval(cWaiter), 120000);
+            }
+        }, 500);
+        setTimeout(() => clearInterval(vWaiter), 180000);
+    }
 })();

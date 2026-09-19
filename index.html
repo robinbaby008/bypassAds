@@ -33,11 +33,12 @@
   </div>
 
   <div class="card">
-    <h3>⚡ Auto-bypass in browser (Tampermonkey) — Recommended <code>v13</code></h3>
+    <h3>⚡ Auto-bypass in browser (Tampermonkey) — Recommended <code>v14</code></h3>
     <p><b>GPLinks Bypasser 2026</b> (by @NickUpdates). Works on <code>gplinks.co</code>, <code>fakepe.com</code>, <code>rajcet.com</code>, <code>skrresults.com</code>: auto-clicks “Continue with ads” (<code>?skip_sub=1</code>), runs the 30s/step countdown, and on ad pages auto-waits the 15s timer, clicks <b>VERIFY</b> and <b>Continue</b>. Keep the tab open, don’t refresh.</p>
     <a class="btn" href="/ShortlinkBypass.user.js">Install Userscript</a>
     <details style="margin-top:12px"><summary><small>Version history</small></summary>
       <small>
+      v14 — on-page status pill shows live step (gate → VERIFY → captcha)<br>
       v13 — keeps clicking follow-up buttons after Get Link<br>
       v12 — auto-clicks Get Link once Turnstile is solved<br>
       v11 — robust gate skip (button click, query-safe redirect)<br>
@@ -59,6 +60,10 @@
       }
       $("go").disabled = true;
       box.innerHTML = "⏳ Bypassing… (takes ~10s for GPLinks timer)";
+      const showTrace = (j) =>
+        (j && j.trace && j.trace.length
+          ? `<details style="margin-top:8px" open><summary><small>Server trace (which step ran)</small></summary><small>${j.trace.map(t => `<div>▸ ${t}</div>`).join("")}</small></details>`
+          : "");
       try {
         const r = await fetch("/api/bypass", {
           method: "POST",
@@ -66,13 +71,17 @@
           body: JSON.stringify({ url }),
         });
         const j = await r.json();
-        if (!r.ok) throw new Error(j.error || "Bypass failed");
-        box.innerHTML = `✅ Bypassed:<br><a href="${j.bypassed}" target="_blank" rel="noopener">${j.bypassed}</a><br><br><button id="copy">Copy</button>`;
+        if (!r.ok) {
+          box.innerHTML = `❌ ${j.error || "Bypass failed"}${showTrace(j)}`;
+          return;
+        }
+        box.innerHTML = `✅ Bypassed:<br><a href="${j.bypassed}" target="_blank" rel="noopener">${j.bypassed}</a><br><br><button id="copy">Copy</button>${showTrace(j)}`;
         $("copy").onclick = () => navigator.clipboard.writeText(j.bypassed);
       } catch (e) {
         box.innerHTML = "❌ " + e.message;
+      } finally {
+        $("go").disabled = false;
       }
-      $("go").disabled = false;
     });
     // Full bypass happens in YOUR tab (userscript), not on the server:
     // open the pasted link where Tampermonkey v11 auto-drives everything.

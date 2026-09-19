@@ -137,10 +137,13 @@ async function fetchWithCookies(url, jar, options = {}) {
 async function gplinksEngineBypass(startUrl, dbg = {}) {
   const jar = [];
   const u0 = new URL(startUrl);
+  dbg.trace = dbg.trace || [];
+  const step = (s) => dbg.trace.push(s);
 
   // Step 1: initial GET (manual redirect to capture vid flow)
   let res = await fetchWithCookies(startUrl, jar);
   dbg.initialStatus = res.status;
+  step(`GET ${u0.host} → HTTP ${res.status}`);
   if ([403, 503].includes(res.status)) {
     const err = new Error(
       `Upstream blocked this server's IP (HTTP ${res.status} from ${u0.host}). Datacenter IPs get a Cloudflare challenge — open the link in your browser with the userscript instead.`
@@ -158,6 +161,7 @@ async function gplinksEngineBypass(startUrl, dbg = {}) {
       res = await fetchWithCookies(currentUrl, jar, {
         headers: { Referer: startUrl },
       });
+      step(`redirect → ${currentUrl} (HTTP ${res.status})`);
     } else break;
   }
 
@@ -176,6 +180,10 @@ async function gplinksEngineBypass(startUrl, dbg = {}) {
   dbg.hasSkipLink = !!skipMatch;
   dbg.hasGate = /gate-container/i.test(html);
   dbg.hasCloudflare = /challenge-platform|cf-challenge|just a moment/i.test(html);
+  step(
+    `page: ${currentUrl} (${html.length} bytes, gate=${dbg.hasGate}, skipLink=${dbg.hasSkipLink}, cf=${dbg.hasCloudflare})`
+  );
+  if (skipMatch) step(`following skip link → ${skipMatch[1]}`);
   if (skipMatch) {
     const skipUrl = new URL(skipMatch[1], currentUrl).toString();
     let skipRes = await fetchWithCookies(skipUrl, jar, {
@@ -194,10 +202,12 @@ async function gplinksEngineBypass(startUrl, dbg = {}) {
     }
     if ([301, 302, 303, 307, 308].includes(skipRes.status)) {
       // still redirecting (non-HTML destination) — that's the answer
+      step(`skip target redirects → ${skipRes.headers.get("location")} (final answer)`);
       return skipRes.headers.get("location");
     }
     html = await skipRes.text();
     currentUrl = skipRes.url || currentUrl;
+    step(`skip landed: ${currentUrl} (${html.length} bytes)`);
   }
 
   const paywall = detectPaywall(html);
@@ -218,8 +228,11 @@ async function gplinksEngineBypass(startUrl, dbg = {}) {
     if (skipMatch && currentUrl !== startUrl) return currentUrl;
     dbg.hasEngine = false;
     dbg.finalUrl = currentUrl;
+    step("no token form / redirect found — stuck here");
     return null;
   }
+  dbg.hasEngine = true;
+  step(`token form found, POST ${goUrl} after wait`);
   dbg.hasEngine = true;
 
   const origin = new URL(currentUrl).origin || `${u0.protocol}//${u0.host}`;
@@ -243,11 +256,18 @@ async function gplinksEngineBypass(startUrl, dbg = {}) {
   const text = await postRes.text();
   try {
     const json = JSON.parse(text);
-    if (json.url) return json.url;
-    if (json.message && json.message.startsWith("http")) return json.message;
+    if (json.url) {
+      step(`links/go → ${json.url}`);
+      return json.url;
+    }
+    if (json.message && json.message.startsWith("http")) {
+      step(`links/go → ${json.message}`);
+      return json.message;
+    }
     throw new Error(json.message || text.slice(0, 200));
   } catch (e) {
-    // if server says "wait" / token error, surface it
+    // if server says "wait" / token error / captcha, surface it
+    step(`links/go failed: ${(e.message || text).slice(0, 160)}`);
     throw new Error(`links/go failed: ${text.slice(0, 300)}`);
   }
 }
@@ -318,9 +338,10 @@ module.exports = async function handler(req, res) {
         original: url,
         bypassed: dest || url,
         debug: dbg,
+        trace: dbg.trace,
       });
     }
-    return res.status(200).json({ original: url, bypassed: dest });
+    return res.status(200).json({ original: url, bypassed: dest, trace: dbg.trace });
   } catch (err) {
     return res
       .status(500)

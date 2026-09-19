@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GPLinks Bypasser 2026
 // @namespace    Gplinks Bypasser 2026
-// @version      13
+// @version      14
 // @description  Made By @NickUpdates (Telegram)
 // @match        https://rajcet.com/*
 // @match        https://fakepe.com/*
@@ -15,6 +15,20 @@
 
 (async function () {
     'use strict';
+    // On-page status pill: shows which bypass step is active (no DevTools needed).
+    let __statusEl = null;
+    const setStatus = (t) => {
+        try {
+            if (!__statusEl || !__statusEl.isConnected) {
+                __statusEl = document.createElement("div");
+                __statusEl.id = "bypasser-status";
+                __statusEl.style.cssText = "position:fixed;bottom:12px;right:12px;z-index:2147483647;background:#020617;color:#38bdf8;font:600 13px system-ui,sans-serif;padding:8px 12px;border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.5);border:1px solid #1e293b;pointer-events:none;";
+                (document.body || document.documentElement).appendChild(__statusEl);
+            }
+            __statusEl.textContent = "⚡ " + t;
+            console.log("[Bypasser] " + t);
+        } catch (e) { /* non-fatal */ }
+    };
     const href = location.href;
     // ── Premium subscription gate → "Continue with ads" ──
     // Gate pages have no ?pid/&pid yet. Prefer clicking the site's own skip
@@ -25,7 +39,7 @@
             "a.gate-btn-skip, a[href*='skip_sub=1']"
         );
         if (skipBtn && skipBtn.href) {
-            console.log("[Bypasser] gate skip via button:", skipBtn.href);
+            setStatus("Gate skipped, continuing…");
             location.replace(skipBtn.href);
             return;
         }
@@ -44,7 +58,7 @@
             return;
         }
         const sep = href.includes("?") ? "&" : "?";
-        console.log("[Bypasser] gate skip via redirect");
+        setStatus("Gate skipped, continuing…");
         location.replace(href + sep + "skip_sub=1");
         return;
     };
@@ -71,16 +85,24 @@
         };
         const clickBtn = (el, why) => {
             el.dataset.bypassed = "1";
-            console.log("[Bypasser] clicking " + why);
+            setStatus("Clicked " + why + " — loading…");
             el.click();
         };
+        let captchaNoticed = false;
         const sweep = () => {
             // Primary: the captcha-gated Get Link (needs solved Turnstile).
             const getLink = document.querySelector(
                 "#captchaButton.get-link, form#go-link .get-link"
             );
-            if (getLink && isClickable(getLink) && tsSolved()) {
-                clickBtn(getLink, "Get Link");
+            if (getLink && isClickable(getLink)) {
+                if (tsSolved()) {
+                    clickBtn(getLink, "Get Link");
+                    return;
+                }
+                if (!captchaNoticed) {
+                    captchaNoticed = true;
+                    setStatus("Captcha found — tick it, I'll click Get Link");
+                }
                 return;
             }
             // Follow-ups: Next / Continue / second Get Link buttons.
@@ -312,6 +334,7 @@
                     }
                 }
                 document.cookie.split(";").forEach(c=>["","."+location.hostname,location.hostname].forEach(d=>document.cookie=`${c.split("=")[0].trim()}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/${d?`;domain=${d}`:""}`));
+                setStatus("Steps done, opening final link…");
                 window.location.href = finalURL;
             }
         }, 1000);
@@ -361,6 +384,7 @@
         };
         const clickNextAndCheckHash = () => {
             clickWithRetry(".NextBtn", "nextClicked", () => {
+                setStatus("Continue clicked, loading next step…");
                 setTimeout(() => {
                     // Some steps land on a bare "#" hash — advance again.
                     if (window.location.href.endsWith("#")) {
@@ -378,7 +402,7 @@
                     getComputedStyle(a).display !== "none");
                 if (alt) {
                     window.nextClicked = true;
-                    console.log("[Bypasser] clicking Continue:", alt.href);
+                    setStatus("Continue clicked, loading next step…");
                     alt.click();
                 }
             }, 3000);
@@ -403,6 +427,7 @@
                         clearInterval(timer);
                         verifyBtn.style.display = "inline-block";
                         placeholder.remove();
+                        setStatus("VERIFY clicked, waiting for Continue…");
                         clickWithRetry("#VerifyBtn", "verifyClicked");
                         setTimeout(clickNextAndCheckHash, 1000);
                     }
@@ -422,7 +447,7 @@
                     clearInterval(vWaiter);
                     if (btn) {
                         btn.style.setProperty("display", "inline-block", "important");
-                        console.log("[Bypasser] clicking VERIFY");
+                        setStatus("VERIFY clicked, waiting for Continue…");
                     }
                     clickWithRetry("#VerifyBtn", "verifyClicked");
                     setTimeout(clickNextAndCheckHash, 1000);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GPLinks Bypasser 2026
 // @namespace    Gplinks Bypasser 2026
-// @version      11
+// @version      12
 // @description  Made By @NickUpdates (Telegram)
 // @match        https://rajcet.com/*
 // @match        https://fakepe.com/*
@@ -48,6 +48,33 @@
         location.replace(href + sep + "skip_sub=1");
         return;
     };
+    // ── Final countdown page: auto-click Get Link once Turnstile is solved ──
+    // The captcha itself is human-only and never touched. When the site
+    // enables the button after a solved Turnstile, click it immediately
+    // so the user stops one click short of the destination.
+    if (/[?&]pid=/.test(href)) {
+        const gWaiter = setInterval(() => {
+            const btn = document.querySelector(
+                "#captchaButton.get-link, form#go-link .get-link"
+            );
+            if (!btn) return;
+            const disabled = btn.classList.contains("disabled") ||
+                btn.hasAttribute("disabled") ||
+                btn.getAttribute("aria-disabled") === "true";
+            // If the Turnstile widget is present, require a solved token.
+            const tsInput = document.querySelector(
+                "input[name='cf-turnstile-response']"
+            );
+            const tsSolved = !tsInput ||
+                (tsInput.value && tsInput.value.length > 0);
+            if (!disabled && tsSolved) {
+                clearInterval(gWaiter);
+                console.log("[Bypasser] Turnstile solved, clicking Get Link");
+                btn.click();
+            }
+        }, 1000);
+        setTimeout(() => clearInterval(gWaiter), 300000);
+    }
     const nonce = window.gpfConfig.nonce;
     if (nonce) {
         let finalUrl = null;

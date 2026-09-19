@@ -1,0 +1,14 @@
+# Render Blueprint — single Web Service (static site + bypass API).
+# Deploy: Render Dashboard → New → Blueprint → select this repo.
+services:
+  - type: web
+    name: bypassads
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: BYPASS_WAIT_MS
+        value: 8000

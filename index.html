@@ -27,6 +27,7 @@
     </div>
     <div class="row">
       <button id="open" style="background:#1565C0" title="Opens the link in a new tab where the installed userscript auto-drives gate, timers, VERIFY and Continue">🌐 Open in browser (auto-bypass)</button>
+      <button id="deep" style="background:#15b870" title="Server runs the full chain: gate, skip, waits, ad steps, countdown (about 2 minutes, Render only)">🐢 Deep bypass (~2 min)</button>
     </div>
     <div id="result"></div>
     <p><small>Powered by <code>/api/bypass</code> (GPLinks-engine: GET → parse inputs → POST <code>/links/go</code>).</small></p>
@@ -83,7 +84,44 @@
         $("go").disabled = false;
       }
     });
-    // Full bypass happens in YOUR tab (userscript), not on the server:
+    // Deep mode: server runs gate → skip → waits → ad steps → countdown.
+    // Takes ~2 minutes (Render only). Ends at captcha-required or done.
+    $("deep").addEventListener("click", async () => {
+      const url = $("url").value.trim();
+      const box = $("result");
+      if (!/^https?:\/\//i.test(url)) {
+        box.innerHTML = "❌ Enter a valid http(s) URL.";
+        return;
+      }
+      $("go").disabled = true;
+      $("deep").disabled = true;
+      box.innerHTML = "🐢 Deep bypass running… keep this page open (~2 min: waits + ad steps).";
+      try {
+        const r = await fetch("/api/bypass", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, full: true }),
+        });
+        const j = await r.json();
+        const trace = (j.trace || []).map(t => `<div>▸ ${t}</div>`).join("");
+        const traceBox = trace ? `<details style="margin-top:8px" open><summary><small>Server trace (which step ran)</small></summary><small>${trace}</small></details>` : "";
+        if (!r.ok) {
+          box.innerHTML = `❌ ${j.error || "Bypass failed"}${traceBox}`;
+          return;
+        }
+        if (j.status === "captcha-required") {
+          box.innerHTML = `⚠️ Countdown reached — one captcha left:<br><a href="${j.countdownUrl}" target="_blank" rel="noopener">${j.countdownUrl}</a><br><small>${j.note || ""}</small>${traceBox}`;
+          return;
+        }
+        box.innerHTML = `✅ Bypassed:<br><a href="${j.bypassed}" target="_blank" rel="noopener">${j.bypassed}</a><br><br><button id="copy2">Copy</button>${traceBox}`;
+        $("copy2").onclick = () => navigator.clipboard.writeText(j.bypassed);
+      } catch (e) {
+        box.innerHTML = "❌ " + e.message + "<br><small>Deep mode needs the Render host (Vercel times out).</small>";
+      } finally {
+        $("go").disabled = false;
+        $("deep").disabled = false;
+      }
+    });
     // open the pasted link where Tampermonkey v11 auto-drives everything.
     $("open").addEventListener("click", () => {
       const url = $("url").value.trim();

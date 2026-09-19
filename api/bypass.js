@@ -272,6 +272,138 @@ async function gplinksEngineBypass(startUrl, dbg = {}) {
   }
 }
 
+async function deepBypass(startUrl, dbg = {}) {
+  // Full server-side chain: gate → skip → waits + ad steps → countdown page.
+  // Ends at captcha-required (Turnstile is human-only) or done. Needs a
+  // persistent host (Render) — far beyond serverless timeouts.
+  const jar = [];
+  dbg.trace = dbg.trace || [];
+  const step = (s) => dbg.trace.push(s);
+  const cookies = () => {
+    const m = {};
+    for (const c of jar) {
+      const pair = c.split(";")[0];
+      const i = pair.indexOf("=");
+      if (i > 0) m[pair.slice(0, i).trim()] = pair.slice(i + 1);
+    }
+    return m;
+  };
+
+  step("deep mode: gate → skip → waits + ad steps → countdown (≈2 min)");
+  const u0 = new URL(startUrl);
+  let res = await fetchWithCookies(startUrl, jar);
+  if ([403, 503].includes(res.status)) {
+    const err = new Error(
+      `Upstream blocked this server's IP (HTTP ${res.status} from ${u0.host}). Use the browser userscript instead.`
+    );
+    err.code = "UPSTREAM_BLOCKED";
+    throw err;
+  }
+  let currentUrl = startUrl;
+  for (
+    let i = 0;
+    i < 5 && [301, 302, 303, 307, 308].includes(res.status);
+    i++
+  ) {
+    const loc = res.headers.get("location");
+    if (!loc) break;
+    currentUrl = new URL(loc, currentUrl).toString();
+    res = await fetchWithCookies(currentUrl, jar, {
+      headers: { Referer: startUrl },
+    });
+  }
+  let html = await res.text();
+  currentUrl = res.url || currentUrl;
+  step(`gate: ${currentUrl} (${html.length} bytes)`);
+
+  const skipMatch = html.match(/href="([^"]*skip_sub=1[^"]*)"/i);
+  if (skipMatch) {
+    const skipUrl = new URL(skipMatch[1], currentUrl).toString();
+    step(`skip → ${skipUrl}`);
+    let skipRes = await fetchWithCookies(skipUrl, jar, {
+      headers: { Referer: currentUrl },
+    });
+    for (
+      let i = 0;
+      i < 5 && [301, 302, 303, 307, 308].includes(skipRes.status);
+      i++
+    ) {
+      const loc = skipRes.headers.get("location");
+      if (!loc) break;
+      currentUrl = new URL(loc, currentUrl).toString();
+      skipRes = await fetchWithCookies(currentUrl, jar, {
+        headers: { Referer: skipUrl },
+      });
+    }
+    if ([301, 302, 303, 307, 308].includes(skipRes.status)) {
+      const loc = skipRes.headers.get("location");
+      step(`skip redirects onward → ${loc} (taking it)`);
+      return { dest: loc, status: "done" };
+    }
+    html = await skipRes.text();
+    currentUrl = skipRes.url || currentUrl;
+  }
+  step(`ad page: ${currentUrl} (${html.length} bytes)`);
+
+  const cm = cookies();
+  if (!cm.lid || !cm.pid || !cm.vid || !cm.pages) {
+    throw new Error(
+      `no tracking cookies issued (got: ${Object.keys(cm).join(",") || "none"}) — steps impossible`
+    );
+  }
+  const pages = Math.min(parseInt(cm.pages, 10) || 0, 5);
+  if (!pages) throw new Error("pages cookie invalid");
+  const waitMs = pages * 30000 + 5000;
+  step(
+    `cookies: lid=${cm.lid} pages=${pages} — waiting ${Math.round(waitMs / 1000)}s (server-enforced)...`
+  );
+  await sleep(waitMs);
+
+  const stepBase = currentUrl;
+  for (let i = 1; i <= pages; i++) {
+    const body = new URLSearchParams({
+      form_name: "ads-track-data",
+      step_id: String(i),
+      ad_impressions: "2",
+      visitor_id: cm.vid,
+      next_target: "",
+    }).toString();
+    const rp = await fetchWithCookies(stepBase, jar, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Referer: stepBase,
+      },
+      body,
+    });
+    await rp.text();
+    await sleep(1200);
+    step(`step ${i}/${pages} posted (HTTP ${rp.status})`);
+  }
+
+  const finalUrl = `https://gplinks.co/${cm.lid}?pid=${cm.pid}&vid=${cm.vid}`;
+  step(`opening countdown page…`);
+  const rf = await fetchWithCookies(finalUrl, jar, {
+    headers: { Referer: stepBase },
+  });
+  if ([301, 302, 303, 307, 308].includes(rf.status)) {
+    const loc = rf.headers.get("location");
+    step(`countdown redirects → ${loc}`);
+    if (/link-error|not_enough_steps/i.test(loc))
+      throw new Error("rejected: not_enough_steps — waits/steps not accepted");
+    return { dest: new URL(loc, finalUrl).toString(), status: "done" };
+  }
+  const hf = await rf.text();
+  const hasGo = /id=["']go-link["']/i.test(hf);
+  const hasTs = /cf-turnstile/i.test(hf);
+  step(
+    `countdown page HTTP ${rf.status} (${hf.length} bytes, go-link=${hasGo}, turnstile=${hasTs})`
+  );
+  if (hasGo)
+    return { dest: finalUrl, status: "captcha-required" };
+  throw new Error("unexpected countdown page — no token form");
+}
+
 async function genericResolve(startUrl) {
   // Simple redirect + meta/JS redirect follower (for non-GPLinks links)
   let url = startUrl;
@@ -317,14 +449,34 @@ module.exports = async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const url = req.method === "POST" ? req.body?.url : req.query.url;
+  const full =
+    req.method === "POST"
+      ? !!req.body?.full
+      : /^(1|true)$/i.test(req.query.full || "");
   if (!url || typeof url !== "string" || !/^https?:\/\//i.test(url)) {
     return res.status(400).json({ error: "Provide a valid http(s) url" });
   }
 
+  const dbg = {};
   try {
+    // Deep mode: full chain with waits + ad steps (Render only, ~2 min).
+    if (full) {
+      const r = await deepBypass(url, dbg);
+      if (r.status === "done")
+        return res
+          .status(200)
+          .json({ original: url, bypassed: r.dest, mode: "deep", trace: dbg.trace });
+      return res.status(200).json({
+        original: url,
+        status: "captcha-required",
+        countdownUrl: r.dest,
+        mode: "deep",
+        trace: dbg.trace,
+        note: "Countdown page reached. Its Turnstile must be solved in a browser tab (userscript v12+ clicks Get Link right after).",
+      });
+    }
     // Try GPLinks-engine first, fall back to generic resolving
     let dest = null;
-    const dbg = {};
     try {
       dest = await gplinksEngineBypass(url, dbg);
     } catch (e) {
@@ -343,8 +495,10 @@ module.exports = async function handler(req, res) {
     }
     return res.status(200).json({ original: url, bypassed: dest, trace: dbg.trace });
   } catch (err) {
-    return res
-      .status(500)
-      .json({ error: err.message || "Bypass failed", original: url });
+    return res.status(500).json({
+      error: err.message || "Bypass failed",
+      original: url,
+      trace: dbg.trace,
+    });
   }
 };

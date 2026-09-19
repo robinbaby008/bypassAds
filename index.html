@@ -25,6 +25,9 @@
       <input id="url" type="url" placeholder="https://gplinks.co/xxxx  or  just2earn link…" />
       <button id="go">Bypass</button>
     </div>
+    <div class="row">
+      <button id="open" style="background:#1565C0" title="Opens the link in a new tab where the installed userscript auto-drives gate, timers, VERIFY and Continue">🌐 Open in browser (auto-bypass)</button>
+    </div>
     <div id="result"></div>
     <p><small>Powered by <code>/api/bypass</code> (GPLinks-engine: GET → parse inputs → POST <code>/links/go</code>).</small></p>
   </div>
@@ -60,6 +63,18 @@
         box.innerHTML = "❌ " + e.message;
       }
       $("go").disabled = false;
+    });
+    // Full bypass happens in YOUR tab (userscript), not on the server:
+    // open the pasted link where Tampermonkey v11 auto-drives everything.
+    $("open").addEventListener("click", () => {
+      const url = $("url").value.trim();
+      const box = $("result");
+      if (!/^https?:\/\//i.test(url)) {
+        box.innerHTML = "❌ Enter a valid http(s) URL.";
+        return;
+      }
+      box.innerHTML = "🌐 Opened in new tab — v11 script takes over (gate → timers → VERIFY → Continue).";
+      window.open(url, "_blank", "noopener");
     });
   </script>
 </body>

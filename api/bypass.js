@@ -67,6 +67,20 @@ function findJsRedirect(html, base) {
   return null;
 }
 
+function detectPaywall(html) {
+  const h = html.toLowerCase();
+  if (
+    h.includes("gate-container") &&
+    (h.includes("subscription/initiate") || h.includes("gplinks premium"))
+  ) {
+    return "This link requires GPlinks Premium subscription (paywall gate) — it cannot be bypassed server-side. Open it in browser instead.";
+  }
+  if (h.includes("turnstile") && h.includes("verify you are human")) {
+    return "This link is behind a Cloudflare/human-verification challenge — automated bypass blocked.";
+  }
+  return null;
+}
+
 async function fetchWithCookies(url, jar, options = {}) {
   const headers = {
     "User-Agent": UA,
@@ -105,12 +119,55 @@ async function gplinksEngineBypass(startUrl) {
     } else break;
   }
 
-  const html = await res.text();
+  let html = await res.text();
   currentUrl = res.url || currentUrl;
 
+  // New GPLinks "subscription gate" has a "Continue with ads" skip link
+  // e.g. <a href="/x6jlK?skip_sub=1" class="gate-btn-skip"> — follow it,
+  // it 302s to the ad-flow / destination. Then continue with that page.
+  const skipMatch = html.match(/href="([^"]*skip_sub=1[^"]*)"/i);
+  if (skipMatch) {
+    const skipUrl = new URL(skipMatch[1], currentUrl).toString();
+    let skipRes = await fetchWithCookies(skipUrl, jar, {
+      headers: { Referer: currentUrl },
+    });
+    // follow redirects from skip link, preserving cookies
+    for (let i = 0; i < 5; i++) {
+      if ([301, 302, 303, 307, 308].includes(skipRes.status)) {
+        const loc = skipRes.headers.get("location");
+        if (!loc) break;
+        currentUrl = new URL(loc, currentUrl).toString();
+        skipRes = await fetchWithCookies(currentUrl, jar, {
+          headers: { Referer: skipUrl },
+        });
+      } else break;
+    }
+    if ([301, 302, 303, 307, 308].includes(skipRes.status)) {
+      // still redirecting (non-HTML destination) — that's the answer
+      return skipRes.headers.get("location");
+    }
+    html = await skipRes.text();
+    currentUrl = skipRes.url || currentUrl;
+  }
+
+  const paywall = detectPaywall(html);
+  if (paywall) {
+    const err = new Error(paywall);
+    err.code = "PAYWALL";
+    throw err;
+  }
+
   const data = parseInputs(html);
-  // GPLinks-engine pages always have these token fields; if none, not this engine
-  if (!data || Object.keys(data).length === 0) return null;
+  // Only GPLinks-engine pages have the #go-link form + /links/go endpoint.
+  // (WordPress landing pages also contain <input>s — ignore those.)
+  const hasEngine =
+    /id=["']go-link["']/i.test(html) || /links\/go/i.test(html);
+  if (!hasEngine || !data || Object.keys(data).length === 0) {
+    // If we already followed a skip link to a different page, that page
+    // IS the destination (e.g. skip_sub=1 → 302 to advertiser site).
+    if (skipMatch && currentUrl !== startUrl) return currentUrl;
+    return null;
+  }
 
   const origin = new URL(currentUrl).origin || `${u0.protocol}//${u0.host}`;
   const goUrl = `${origin}/links/go`;
@@ -159,6 +216,12 @@ async function genericResolve(startUrl) {
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("html")) return url;
     const html = await res.text();
+    const paywall = detectPaywall(html);
+    if (paywall) {
+      const err = new Error(paywall);
+      err.code = "PAYWALL";
+      throw err;
+    }
     const meta = findMetaRefresh(html, url);
     if (meta && meta !== url) {
       url = meta;
@@ -191,11 +254,17 @@ module.exports = async function handler(req, res) {
     try {
       dest = await gplinksEngineBypass(url);
     } catch (e) {
-      // If engine detected but POST failed (e.g. wait too short), surface error
-      // unless page wasn't engine at all (null) — then try generic
-      if (e.message && e.message.includes("links/go failed")) throw e;
+      // Paywall / challenge / links/go failures are definitive — surface them
+      if (e.code === "PAYWALL" || (e.message && e.message.includes("links/go failed"))) throw e;
     }
     if (!dest) dest = await genericResolve(url);
+    if (!dest || dest === url) {
+      return res.status(422).json({
+        error: "No bypassable destination found — page has no redirect or token form (this gplinks link shows a Premium paywall gate).",
+        original: url,
+        bypassed: dest || url,
+      });
+    }
     return res.status(200).json({ original: url, bypassed: dest });
   } catch (err) {
     return res

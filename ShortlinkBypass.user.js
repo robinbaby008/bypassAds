@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GPLinks Bypasser 2026
 // @namespace    Gplinks Bypasser 2026
-// @version      14
+// @version      15
 // @description  Made By @NickUpdates (Telegram)
 // @match        https://rajcet.com/*
 // @match        https://fakepe.com/*
@@ -96,7 +96,22 @@
             );
             if (getLink && isClickable(getLink)) {
                 if (tsSolved()) {
-                    clickBtn(getLink, "Get Link");
+                    // Site enables the blue button ~3s after a successful
+                    // tick — wait out that delay, re-query fresh, then click.
+                    if (!sweep.armed) {
+                        sweep.armed = true;
+                        setStatus("Captcha solved — clicking Get Link in 3s…");
+                        setTimeout(() => {
+                            const fresh = document.querySelector(
+                                "#captchaButton.get-link, form#go-link .get-link"
+                            );
+                            if (fresh && isClickable(fresh)) {
+                                clickBtn(fresh, "Get Link");
+                            } else {
+                                sweep.armed = false; // vanished — re-arm
+                            }
+                        }, 3000);
+                    }
                     return;
                 }
                 if (!captchaNoticed) {

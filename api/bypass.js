@@ -32,6 +32,16 @@ function getDispatcher() {
   return _dispatcher;
 }
 
+// Proxy-aware fetch: global fetch when direct; the matching undici fetch
+// when a proxy dispatcher is set (global fetch rejects foreign dispatchers
+// and undici ProxyAgent also speaks SOCKS5 experimentally).
+function httpFetch(url, opts) {
+  const d = getDispatcher();
+  if (!d) return fetch(url, opts);
+  const { fetch: uFetch } = require("undici");
+  return uFetch(url, { ...opts, dispatcher: d });
+}
+
 function getCookies(res) {
   // undici: res.headers.getSetCookie() (Node 18+)
   if (typeof res.headers.getSetCookie === "function") {
@@ -115,11 +125,10 @@ async function fetchWithCookies(url, jar, options = {}) {
   };
   const cookie = jarToHeader(jar);
   if (cookie) headers["Cookie"] = cookie;
-  const res = await fetch(url, {
+  const res = await httpFetch(url, {
     ...options,
     headers,
     redirect: "manual",
-    dispatcher: getDispatcher() || undefined,
   });
   jar.push(...getCookies(res));
   return res;
@@ -244,10 +253,9 @@ async function genericResolve(startUrl) {
   // Simple redirect + meta/JS redirect follower (for non-GPLinks links)
   let url = startUrl;
   for (let i = 0; i < 10; i++) {
-    const res = await fetch(url, {
+    const res = await httpFetch(url, {
       headers: { "User-Agent": UA },
       redirect: "manual",
-      dispatcher: getDispatcher() || undefined,
     });
     if ([301, 302, 303, 307, 308].includes(res.status)) {
       const loc = res.headers.get("location");

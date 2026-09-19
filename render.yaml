@@ -12,3 +12,6 @@ services:
     envVars:
       - key: BYPASS_WAIT_MS
         value: 8000
+      # Residential proxy for upstream requests (paste key in Dashboard, never in git).
+      - key: HTTP_PROXY
+        sync: false

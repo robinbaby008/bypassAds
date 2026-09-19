@@ -10,6 +10,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "undici": "^8.10.2"
   }
 }

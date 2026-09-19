@@ -8,6 +8,30 @@ const UA =
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Optional residential proxy (e.g. HTTP_PROXY=http://user:pass@host:port).
+// Set in Render Dashboard → Environment (never commit the key).
+// When unset, requests go direct. The proxy URL is never logged.
+let _dispatcher;
+function getDispatcher() {
+  if (_dispatcher !== undefined) return _dispatcher;
+  const proxyUrl =
+    process.env.HTTP_PROXY ||
+    process.env.HTTPS_PROXY ||
+    process.env.http_proxy ||
+    process.env.https_proxy;
+  if (!proxyUrl) {
+    _dispatcher = null;
+    return _dispatcher;
+  }
+  try {
+    const { ProxyAgent } = require("undici");
+    _dispatcher = new ProxyAgent(proxyUrl);
+  } catch {
+    _dispatcher = null;
+  }
+  return _dispatcher;
+}
+
 function getCookies(res) {
   // undici: res.headers.getSetCookie() (Node 18+)
   if (typeof res.headers.getSetCookie === "function") {
@@ -95,6 +119,7 @@ async function fetchWithCookies(url, jar, options = {}) {
     ...options,
     headers,
     redirect: "manual",
+    dispatcher: getDispatcher() || undefined,
   });
   jar.push(...getCookies(res));
   return res;
@@ -222,6 +247,7 @@ async function genericResolve(startUrl) {
     const res = await fetch(url, {
       headers: { "User-Agent": UA },
       redirect: "manual",
+      dispatcher: getDispatcher() || undefined,
     });
     if ([301, 302, 303, 307, 308].includes(res.status)) {
       const loc = res.headers.get("location");

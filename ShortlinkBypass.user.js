@@ -20,7 +20,7 @@
     // Gate pages have no ?pid/&pid yet. Prefer clicking the site's own skip
     // button (a.gate-btn-skip); fall back to a query-safe redirect so URLs
     // that already carry params don't get a broken double "?".
-    if (href.includes("gplinks.co") && !/[?&]pid=/.test(href)) {
+    if (href.includes("gplinks.co") && !/[?&]pid=/.test(href) && !href.includes("skip_sub=1")) {
         const skipBtn = document.querySelector(
             "a.gate-btn-skip, a[href*='skip_sub=1']"
         );
